@@ -13,7 +13,7 @@ my_world_size=4 # n parallel
 #initial_model=lightblue/karasu-1.1B
 #initial_model=CohereForAI/c4ai-command-r-v01
 
-initial_model=meta-llama/Meta-Llama-3-8B-Instruct
+#initial_model=meta-llama/Meta-Llama-3-8B-Instruct
 #initial_model=EleutherAI/gpt-neox-20b
 #initial_model=hatakeyama-llm-team/Tanuki-8B-Instruct-without-DPO
 #initial_model=nk2t/Llama-3-8B-Instruct-japanese-nk2t-v0.3
@@ -23,7 +23,7 @@ initial_model=meta-llama/Meta-Llama-3-8B-Instruct
 #initial_model=JINIAC/JINIAC-5B-sft_configuration-3_prod-checkpoint-500-dpo_merge_20240526_final
 #initial_model=JINIAC/JINIAC-5B-sft_configuration-3_prod-checkpoint-500-dpo_merge_20240526_final
 #initial_model=llm-jp/llm-jp-13b-instruct-full-dolly-ichikara_004_001_single-oasst-oasst2-v2.0
-#initial_model=tokyotech-llm/Swallow-MX-8x7b-NVE-v0.1
+initial_model=tokyotech-llm/Swallow-MX-8x7b-NVE-v0.1
 #initial_model=tokyotech-llm/Swallow-70b-hf
 #initial_model=stockmark/stockmark-100b
 
@@ -34,19 +34,19 @@ initial_model=meta-llama/Meta-Llama-3-8B-Instruct
 #prompt_path="/storage5/takagi/datasets/hh-rlhf-12k-ja_mod"
 #dataset_key="input"
 
-#prompt_path="/storage5/takagi/datasets/hh-rlhf-12k-ja_alpaca"
-#dataset_key="input"
+prompt_path="/storage5/takagi/datasets/hh-rlhf-12k-ja_alpaca"
+dataset_key="input"
 
 #prompt_path="/storage5/takagi/datasets/iterative-prompt-v1-iter1-20K"
 #dataset_key="context_messages"
 
-prompt_path="/storage5/takagi/datasets/test_generation_2k"
-dataset_key="context_messages"
+#prompt_path="/storage5/takagi/datasets/test_generation_2k"
+#dataset_key="context_messages"
 
 
-#reward_model_path=/storage5/takagi/models/mistral_rm
+reward_model_path=/storage5/takagi/models/mistral_rm
 #reward_model_path=/storage5/takagi/models/swallow_mx_rm_lora
-reward_model_path=sfairXC/FsfairX-LLaMA3-RM-v0.1
+#reward_model_path=sfairXC/FsfairX-LLaMA3-RM-v0.1
 
 function get_last_dir() {
   path=$1
@@ -168,6 +168,30 @@ run_iteration() {
 
 #    generate_and_reward ${iteration_name} ${model_path} ${input_prompt} ${output_generate} ${output_reward}
 
+    if [ $i -eq 1 ]; then
+      echo "precopute reference log props"
+      accelerate launch \
+        --config_file ./configs/zero3.yaml \
+        ./dpo_iteration/run_precompute_ref_log_probs.py \
+        --run_name ${iteration_name} \
+        --output_dir ${iteration_name} \
+        --model_name_or_path ${model_path} \
+        --ref_model ${initial_model} \
+        --learning_rate 2e-7 \
+        --num_train_epochs 1 \
+        --logging_steps 1 \
+        --choose_type max_min \
+        --train_dir ${output_reward} \
+        --eval_dir ${output_reward} \
+        --eval_steps 1 \
+        --loss_type sigmoid \
+        --lr_scheduler_type cosine \
+        --warmup_steps 10 \
+        --gradient_accumulation_steps 8 \
+        --save_strategy no \
+        --beta ${dpo_beta}
+    fi
+
     # train
     echo "train"
     accelerate launch \
@@ -183,7 +207,7 @@ run_iteration() {
       --choose_type max_min \
       --train_dir ${output_reward} \
       --eval_dir ${output_reward} \
-      --eval_steps 1 \
+      --eval_steps 100 \
       --loss_type sigmoid \
       --lr_scheduler_type cosine \
       --warmup_steps 10 \
@@ -224,28 +248,6 @@ do
     # Determine the model path: first iteration uses the initial model, subsequent iterations use the previous iteration's model
     if [ $i -eq 1 ]; then
         model_path=${initial_model}
-        echo "precopute reference log props"
-        accelerate launch \
-          --config_file ./configs/zero3.yaml \
-          ./dpo_iteration/run_precompute_ref_log_probs.py \
-          --run_name ${iteration_name} \
-          --output_dir ${iteration_name} \
-          --model_name_or_path ${model_path} \
-          --ref_model ${initial_model} \
-          --learning_rate 2e-7 \
-          --num_train_epochs 1 \
-          --logging_steps 1 \
-          --choose_type max_min \
-          --train_dir ${output_reward} \
-          --eval_dir ${output_reward} \
-          --eval_steps 1 \
-          --loss_type sigmoid \
-          --lr_scheduler_type cosine \
-          --warmup_steps 10 \
-          --gradient_accumulation_steps 8 \
-          --save_strategy no \
-          --beta ${dpo_beta}
-
     else
         previous_iteration=$((i-1))
         model_path="${model_dir}/${iteration_prefix}/iter${previous_iteration}"
@@ -256,27 +258,27 @@ done
 
 echo "end loop"
 
-echo "last predict"
-
-i=$((i+1))
-echo "i="${i}
-previous_iteration=$((i-1))
-model_path="${model_dir}/${iteration_prefix}/iter${previous_iteration}"
-
-iteration_name="${model_dir}/${iteration_prefix}/iter${i}"
-input_prompt=${prompt_path} # json format
-dataset_key=${dataset_key}
-output_generate="${predict_dir}/${iteration_prefix}_${i}.json"
-output_reward="${predict_dir}/${iteration_prefix}_${i}_reward.json"
-
-last_predict ${iteration_name} ${model_path} ${input_prompt} ${output_generate} ${output_reward}
-
-sleep 10
-echo "make_csv"
-
-python make_summary.py \
-  --input_prompt ${input_prompt} \
-  --predict_dir ${predict_dir} \
-  --iteration_prefix ${iteration_prefix}
-
-echo "dump at "${iteration_prefix}_summary.csv
+#echo "last predict"
+#
+#i=$((i+1))
+#echo "i="${i}
+#previous_iteration=$((i-1))
+#model_path="${model_dir}/${iteration_prefix}/iter${previous_iteration}"
+#
+#iteration_name="${model_dir}/${iteration_prefix}/iter${i}"
+#input_prompt=${prompt_path} # json format
+#dataset_key=${dataset_key}
+#output_generate="${predict_dir}/${iteration_prefix}_${i}.json"
+#output_reward="${predict_dir}/${iteration_prefix}_${i}_reward.json"
+#
+#last_predict ${iteration_name} ${model_path} ${input_prompt} ${output_generate} ${output_reward}
+#
+#sleep 10
+#echo "make_csv"
+#
+#python make_summary.py \
+#  --input_prompt ${input_prompt} \
+#  --predict_dir ${predict_dir} \
+#  --iteration_prefix ${iteration_prefix}
+#
+#echo "dump at "${iteration_prefix}_summary.csv

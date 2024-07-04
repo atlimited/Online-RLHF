@@ -103,6 +103,8 @@ class ScriptArguments:
     eot_token: Optional[str] = field(default="", metadata={"help": "the end of text token"})
     mask_prompt: Optional[bool] = field(default=False, metadata={"help": "mask prompt"})
     len_penalty: Optional[float] = field(default=0, metadata={"help": "the length penalty"})
+    deepspeed: Optional[str] = field(default="", metadata={"help": "deepspeed config path"})
+#    local_rank: Optional[int] = field(default=1, metadata={"help": "deepspeed local rank"})
 
 
 def prepare_data(
@@ -180,8 +182,8 @@ def prepare_data(
     if sanity_check:
         dataset = dataset.select(range(min(len(dataset), 100))) # eval
     else:
-        dataset = dataset.select(range(100, len(dataset))) # train
-        #dataset = dataset.select(range(100, 300)) # train 検証用
+        #dataset = dataset.select(range(100, len(dataset))) # train
+        dataset = dataset.select(range(100, 300)) # train 検証用
     
     return dataset
 

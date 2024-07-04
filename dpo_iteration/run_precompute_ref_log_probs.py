@@ -180,9 +180,9 @@ def prepare_data(
 
     if sanity_check:
         dataset = dataset.select(range(min(len(dataset), 100))) # eval
-    # else:
+    else:
         # dataset = dataset.select(range(100, len(dataset))) # train
-        #dataset = dataset.select(range(100, 300)) # train 検証用
+        dataset = dataset.select(range(100, 300)) # train 検証用
 
     return dataset
 
@@ -304,7 +304,7 @@ if __name__ == "__main__":
 
     dpo_trainer = PreferenceTrainer(
         model,
-        # model_ref,
+        model,
         args=training_args,
         beta=script_args.beta,
         train_dataset=train_dataset,
@@ -320,13 +320,7 @@ if __name__ == "__main__":
     )
     print("begin to compute_ref_logps")
 
-    # 6. train
-    # train_data_loader = dpo_trainer.get_train_dataloader()
-    # #eval_data_loader = dpo_trainer.get_eval_dataloader()
-
-    # print(train_data_loader)
-
-
+    # 6. compute ref log probs
     from tqdm import tqdm
     from torch.utils.data import DataLoader
 
@@ -334,7 +328,6 @@ if __name__ == "__main__":
     def compute_reference_log_probs(dpo_trainer, dataloader_params):
         # prepare dataloader
         data_loader = dpo_trainer.accelerator.prepare(DataLoader(**dataloader_params))
-        print(data_loader)
 
         reference_chosen_logps = []
         reference_rejected_logps = []
@@ -359,15 +352,19 @@ if __name__ == "__main__":
     }
 
     reference_chosen_logps, reference_rejected_logps = compute_reference_log_probs(dpo_trainer, train_dataloader_params)
-    print("train", "ref_chosen", reference_chosen_logps)
-    print("train", "ref_rejected", reference_rejected_logps)
+
+    all_reference_chosen_logps = torch.cat(reference_chosen_logps).float().numpy()
+    all_reference_rejected_logps = torch.cat(reference_rejected_logps).float().numpy()
+
+    print("train", "ref_chosen", all_reference_chosen_logps)
+    print("train", "ref_rejected", all_reference_rejected_logps)
 
     with open('train_reference_chosen_logps.txt', 'w') as f:
-        for tensor in reference_chosen_logps:
+        for tensor in all_reference_chosen_logps:
             f.write(f"{tensor.item()}\n")
 
     with open('train_reference_rejected_logps.txt', 'w') as f:
-        for tensor in reference_rejected_logps:
+        for tensor in all_reference_rejected_logps:
             f.write(f"{tensor.item()}\n")            
 
     if dpo_trainer.eval_dataset is not None:
@@ -384,13 +381,16 @@ if __name__ == "__main__":
 
         reference_chosen_logps, reference_rejected_logps = compute_reference_log_probs(dpo_trainer, eval_dataloader_params)
 
+        all_reference_chosen_logps = torch.cat(reference_chosen_logps).float().numpy()
+        all_reference_rejected_logps = torch.cat(reference_rejected_logps).float().numpy()
+
         print("eval", "ref_chosen", reference_chosen_logps)
         print("eval", "ref_rejected", reference_rejected_logps)
 
         with open('eval_reference_chosen_logps.txt', 'w') as f:
-            for tensor in reference_chosen_logps:
+            for tensor in all_reference_chosen_logps:
                 f.write(f"{tensor.item()}\n")
 
         with open('eval_reference_rejected_logps.txt', 'w') as f:
-            for tensor in reference_rejected_logps:
+            for tensor in all_reference_rejected_logps:
                 f.write(f"{tensor.item()}\n")   

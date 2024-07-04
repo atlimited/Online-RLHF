@@ -5,7 +5,7 @@ from typing import Optional
 import numpy as np
 import torch
 from datasets import Dataset, load_dataset
-from dpo import PreferenceTrainer
+from dpo_precompute import PreferenceTrainer
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
@@ -179,9 +179,9 @@ def prepare_data(
 
     if sanity_check:
         dataset = dataset.select(range(min(len(dataset), 100))) # eval
-    # else:
+    else:
         # dataset = dataset.select(range(100, len(dataset))) # train
-        #dataset = dataset.select(range(100, 300)) # train 検証用
+        dataset = dataset.select(range(100, 300)) # train 検証用
 
     return dataset
 
@@ -300,7 +300,7 @@ if __name__ == "__main__":
         def on_step_end(self, args, state, control, **kwargs):
             torch.cuda.empty_cache()  # 各ステップ終了時にキャッシュをクリア
 
-    # TODO: reference logpsを読み込む evalとtrainをどうわける？
+    # load precomputed log probs
     train_reference_chosen_logps = []
     with open('train_reference_chosen_logps.txt', 'r') as f:
         for line in f:
@@ -327,7 +327,7 @@ if __name__ == "__main__":
 
     dpo_trainer = PreferenceTrainer(
         model,
-        # model_ref,
+        model,
         args=training_args,
         beta=script_args.beta,
         train_dataset=train_dataset,
@@ -339,11 +339,20 @@ if __name__ == "__main__":
         mask_prompt=script_args.mask_prompt,
         len_penalty=script_args.len_penalty,
         # callbacks=[ClearCacheCallback()],
-        # TODO: ここにtorch.tensorの: reference_logps渡す
-        train_reference_chosen_logps=torch.tensor(train_reference_chosen_logps),
-        train_reference_rejected_logps=torch.tensor(train_reference_rejected_logps),
-        eval_reference_chosen_logps=torch.tensor(eval_reference_chosen_logps),
-        eval_reference_rejected_logps=torch.tensor(eval_reference_rejected_logps),
+        #train_reference_chosen_logps=torch.tensor(train_reference_chosen_logps, dtype=torch.bfloat16),
+        #train_reference_rejected_logps=torch.tensor(train_reference_rejected_logps, dtype=torch.bfloat16),
+        #eval_reference_chosen_logps=torch.tensor(eval_reference_chosen_logps, dtype=torch.bfloat16),
+        #eval_reference_rejected_logps=torch.tensor(eval_reference_rejected_logps, dtype=torch.bfloat16),
+
+        #train_reference_chosen_logps=torch.tensor(train_reference_chosen_logps),
+        #train_reference_rejected_logps=torch.tensor(train_reference_rejected_logps),
+        #eval_reference_chosen_logps=torch.tensor(eval_reference_chosen_logps),
+        #eval_reference_rejected_logps=torch.tensor(eval_reference_rejected_logps),
+
+        train_reference_chosen_logps=train_reference_chosen_logps,
+        train_reference_rejected_logps=train_reference_rejected_logps,
+        eval_reference_chosen_logps=eval_reference_chosen_logps,
+        eval_reference_rejected_logps=eval_reference_rejected_logps,
     )
     print("begin to train")
 

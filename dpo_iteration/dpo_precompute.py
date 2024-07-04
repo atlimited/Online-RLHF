@@ -198,6 +198,8 @@ class PreferenceDataCollatorWithPadding:
 
             batch_element = self.tokenize_batch_element(prompt, chosen, rejected)
             batch_element["margin"] = feature["margin"]
+            batch_element["reference_chosen_logps"] = feature["reference_chosen_logps"]
+            batch_element["reference_rejected_logps"] = feature["reference_rejected_logps"]
             tokenized_batch.append(batch_element)
 
         # return collated batch
@@ -236,6 +238,7 @@ class PreferenceTrainer(DPOTrainer):
         compute_metrics: Optional[Callable[[EvalLoopOutput], Dict]] = None,
         mask_prompt: Optional[bool] = False,
         len_penalty: float = 0,
+        precompute_ref_log_probs: bool = True,
         train_reference_chosen_logps: Optional[torch.FloatTensor] = None, # TODO:何の型のリストか調べる torch.FloatTensor, torch.FloatTensorらしい Tensor型で読み込んでコンストラクタに渡すようにする
         train_reference_rejected_logps: Optional[torch.FloatTensor] = None,
         eval_reference_chosen_logps: Optional[torch.FloatTensor] = None, 
@@ -283,6 +286,7 @@ class PreferenceTrainer(DPOTrainer):
         self.use_dpo_data_collator = True
         self.len_penalty = len_penalty
         # 追加
+        self.precompute_ref_log_probs = precompute_ref_log_probs
         self.train_reference_chosen_logps = train_reference_chosen_logps
         self.train_reference_rejected_logps = train_reference_rejected_logps
         self.eval_reference_chosen_logps = eval_reference_chosen_logps
@@ -313,8 +317,12 @@ class PreferenceTrainer(DPOTrainer):
             The losses tensor contains the DPO loss for each example in the batch.
             The chosen_rewards and rejected_rewards tensors contain the rewards for the chosen and rejected responses, respectively.
         """
+        #print('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
+        #print(type(policy_chosen_logps))
+        #print(policy_chosen_logps)
         pi_logratios = policy_chosen_logps - policy_rejected_logps
         ref_logratios = reference_chosen_logps - reference_rejected_logps + len_penalty
+        #ref_logratios = reference_chosen_logps.to(self.accelerator.device) - reference_rejected_logps.to(self.accelerator.device) + len_penalty
 
         if reference_free:
             ref_logratios = 0
@@ -389,34 +397,36 @@ class PreferenceTrainer(DPOTrainer):
         ) = self.concatenated_forward(model, batch)
         # TODO:refモデルで推論しているのはここ、事前計算結果をselfに保存してskipする
         # if reference_chosen_logps and reference_rejected_logps in batch use them, otherwise use the reference model
+        #print('batch', batch)
         if (
             "reference_chosen_logps" in batch
             and "reference_rejected_logps" in batch
-            and self.args.rpo_alpha is not None
+#            and self.args.rpo_alpha is not None
         ):
-            reference_chosen_logps = batch["reference_chosen_logps"]
-            reference_rejected_logps = batch["reference_rejected_logps"]
+            #print('$$$$$$$$$$$$$$$$$$$ ok &&&&&&&&&&&&&&&&&&')
+            reference_chosen_logps = torch.tensor(batch["reference_chosen_logps"], dtype=policy_chosen_logps.dtype).to(self.accelerator.device)
+            reference_rejected_logps = torch.tensor(batch["reference_rejected_logps"], dtype=policy_chosen_logps.dtype).to(self.accelerator.device)
 
         # if self.reference_chosen_logps is not None and self.reference_rejected_logps is not None:
             # reference_chosen_logps = self.reference_chosen_logps.to(self.accelerator.device)
             # reference_rejected_logps = self.reference_rejected_logps.to(self.accelerator.device)
-        else:
-            with torch.no_grad():
-                if self.ref_model is None:
-                    with self.accelerator.unwrap_model(self.model).disable_adapter():
-                        (
-                            reference_chosen_logps,
-                            reference_rejected_logps,
-                            _,
-                            _,
-                        ) = self.concatenated_forward(self.model, batch)
-                else:
-                    (
-                        reference_chosen_logps,
-                        reference_rejected_logps,
-                        _,
-                        _,
-                    ) = self.concatenated_forward(self.ref_model, batch)
+        #else:
+        #    with torch.no_grad():
+        #        if self.ref_model is None:
+        #            with self.accelerator.unwrap_model(self.model).disable_adapter():
+        #                (
+        #                    reference_chosen_logps,
+        #                    reference_rejected_logps,
+        #                    _,
+        #                    _,
+        #                ) = self.concatenated_forward(self.model, batch)
+        #        else:
+        #            (
+        #                reference_chosen_logps,
+        #                reference_rejected_logps,
+        #                _,
+        #                _,
+        #            ) = self.concatenated_forward(self.ref_model, batch)
         if self.len_penalty > 0:
             chosen_len = batch["chosen_input_ids"].shape[1] * self.len_penalty
             rejected_len = batch["rejected_input_ids"].shape[1] * self.len_penalty
@@ -482,6 +492,9 @@ class PreferenceTrainer(DPOTrainer):
             all_reference_chosen_logps = torch.cat(self.train_reference_chosen_logps).float().numpy()
             all_reference_rejected_logps = torch.cat(self.train_reference_rejected_logps).float().numpy()
 
+            #print('########################## before self.train_dataset')
+            #print(self.train_dataset)
+
             self.train_dataset = self.train_dataset.add_column(
                 name="reference_chosen_logps", column=all_reference_chosen_logps
             )
@@ -490,6 +503,9 @@ class PreferenceTrainer(DPOTrainer):
             )
 
             self._precomputed_train_ref_log_probs = True
+
+            #print('########################## self.train_dataset')
+            #print(self.train_dataset)
 
         return super().get_train_dataloader()
 
